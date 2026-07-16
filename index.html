@@ -2,27 +2,302 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Screen Recorder</title>
-    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Screen Recorder</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --primary: #3b82f6;
+            --secondary: #64748b;
+            --danger: #ef4444;
+            --success: #22c55e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .recorder-container {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            width: 90%;
+            max-width: 700px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .video-preview-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-secondary { background-color: var(--secondary); color: white; }
+        .btn-danger { background-color: var(--danger); color: white; }
+        .btn-success { background-color: var(--success); color: white; }
+
+        .btn:hover { filter: brightness(1.1); }
+        .hidden { display: none; }
+    </style>
 </head>
 <body>
+    <div class="recorder-container">
+        <h1>Screen Recorder</h1>
+        
+        <div class="video-preview-wrapper">
+            <video id="preview" autoplay muted playsinline></video>
+            <div id="status-badge" class="badge">Ready</div>
+        </div>
 
-<h2>Screen Recorder</h2>
+        <div class="controls">
+            <button id="btn-start" class="btn btn-primary">Start Recording</button>
+            <button id="btn-pause" class="btn btn-secondary" disabled>Pause</button>
+            <button id="btn-resume" class="btn btn-secondary hidden" disabled>Resume</button>
+            <button id="btn-stop" class="btn btn-danger" disabled>Stop</button>
+            <button id="btn-download" class="btn btn-success" disabled>Download WebM</button>
+        </div>
+    </div>
 
-<button id="start">Start Recording</button>
-<button id="pause">Pause</button>
-<button id="resume">Resume</button>
-<button id="stop">Stop</button>
+    <script>
+        const videoPreview = document.getElementById('preview');
+        const statusBadge = document.getElementById('status-badge');
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+        const btnResume = document.getElementById('btn-resume');
+        const btnStop = document.getElementById('btn-stop');
+        const btnDownload = document.getElementById('btn-download');
 
-<br><br>
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let screenStream = null;
+        let voiceStream = null;
+        let combinedStream = null;
 
-<video id="preview" controls></video>
+        function updateUI(state) {
+            switch(state) {
+                case 'idle':
+                    statusBadge.innerText = 'Ready';
+                    statusBadge.style.color = '#f8fafc';
+                    btnStart.disabled = false;
+                    btnPause.disabled = true;
+                    btnResume.classList.add('hidden');
+                    btnStop.disabled = true;
+                    break;
+                case 'recording':
+                    statusBadge.innerText = 'Recording';
+                    statusBadge.style.color = '#ef4444';
+                    btnStart.disabled = true;
+                    btnPause.disabled = false;
+                    btnPause.classList.remove('hidden');
+                    btnResume.classList.add('hidden');
+                    btnStop.disabled = false;
+                    btnDownload.disabled = true;
+                    break;
+                case 'paused':
+                    statusBadge.innerText = 'Paused';
+                    statusBadge.style.color = '#eab308';
+                    btnPause.classList.add('hidden');
+                    btnResume.classList.remove('hidden');
+                    btnResume.disabled = false;
+                    break;
+                case 'stopped':
+                    statusBadge.innerText = 'Recording Saved';
+                    statusBadge.style.color = '#22c55e';
+                    btnStart.disabled = false;
+                    btnPause.disabled = true;
+                    btnResume.classList.add('hidden');
+                    btnStop.disabled = true;
+                    btnDownload.disabled = false;
+                    break;
+            }
+        }
 
-<br><br>
+        async function startRecording() {
+            recordedChunks = [];
+            
+            try {
+                // 1. Screen Capture
+                screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: true
+                });
 
-<a id="download" style="display:none;">Download Recording</a>
+                // 2. Mic Capture (Safe Block)
+                try {
+                    voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                } catch (micErr) {
+                    console.warn("Mic not available.", micErr);
+                    voiceStream = null;
+                }
 
-<script src="script.js"></script>
+                const tracks = [];
+                if (screenStream && screenStream.getVideoTracks().length > 0) {
+                    tracks.push(screenStream.getVideoTracks()[0]);
+                }
+                if (voiceStream && voiceStream.getAudioTracks().length > 0) {
+                    tracks.push(voiceStream.getAudioTracks()[0]);
+                } else if (screenStream && screenStream.getAudioTracks().length > 0) {
+                    tracks.push(screenStream.getAudioTracks()[0]);
+                }
 
+                combinedStream = new MediaStream(tracks);
+                videoPreview.srcObject = combinedStream;
+
+                let options = { mimeType: 'video/webm; codecs=vp9' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: 'video/webm' };
+                }
+
+                mediaRecorder = new MediaRecorder(combinedStream, options);
+
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) {
+                        recordedChunks.push(e.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    stopAllTracks();
+                    updateUI('stopped');
+                };
+
+                if (screenStream.getVideoTracks()[0]) {
+                    screenStream.getVideoTracks()[0].onended = () => {
+                        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                            mediaRecorder.stop();
+                        }
+                    };
+                }
+
+                mediaRecorder.start(1000); 
+                updateUI('recording');
+
+            } catch (error) {
+                console.error("Error starting:", error);
+                alert("Recording start failed! Please ensure screen sharing permissions are allowed.");
+                stopAllTracks();
+                updateUI('idle');
+            }
+        }
+
+        function pauseRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.pause();
+                updateUI('paused');
+            }
+        }
+
+        function resumeRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'paused') {
+                mediaRecorder.resume();
+                updateUI('recording');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+
+        function downloadRecording() {
+            if (recordedChunks.length === 0) return;
+
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `ScreenRecord_${Date.now()}.webm`;
+            
+            document.body.appendChild(a);
+            a.click();
+            
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+        }
+
+        function stopAllTracks() {
+            if (screenStream) screenStream.getTracks().forEach(track => track.stop());
+            if (voiceStream) voiceStream.getTracks().forEach(track => track.stop());
+            if (videoPreview.srcObject) videoPreview.srcObject = null;
+        }
+
+        btnStart.addEventListener('click', startRecording);
+        btnPause.addEventListener('click', pauseRecording);
+        btnResume.addEventListener('click', resumeRecording);
+        btnStop.addEventListener('click', stopRecording);
+        btnDownload.addEventListener('click', downloadRecording);
+    </script>
 </body>
 </html>
